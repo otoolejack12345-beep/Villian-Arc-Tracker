@@ -6,14 +6,176 @@
 <title>Villain Arc Tracker</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a1f44">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { margin:0; font-family:sans-serif; background:#0a1f44; color:#fff; }
+  .tab-bar { display:flex; justify-content:space-around; position:fixed; bottom:0; width:100%; background:#081634; }
+  .tab { padding:15px; flex:1; text-align:center; cursor:pointer; }
+  .tab.active { background:#12295e; }
+  .page { display:none; padding:20px; padding-bottom:70px; }
+  .page.active { display:block; }
+  #xpBar { width:100%; background:#12295e; height:20px; border-radius:10px; margin:10px 0; }
+  #xpFill { height:100%; background:#00ff00; width:0%; border-radius:10px; }
+  input, button { margin:5px 0; padding:5px; }
+  canvas { background:#081634; border-radius:10px; }
+</style>
 <script>
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js');
+  navigator.serviceWorker.register('sw.js')
+  .then(()=>console.log('Service Worker Registered'))
+  .catch(err=>console.log('SW registration failed:', err));
 }
 </script>
 </head>
 <body>
-<h1>Villain Arc Tracker PWA</h1>
-<p>This is a placeholder for your full HTML code.</p>
+
+<!-- Dashboard Page -->
+<div id="dashboard" class="page active">
+  <h2>Villain Dashboard</h2>
+  <img id="avatar" src="icon.png" alt="Avatar" width="100">
+  <p>Name: <span id="villainNameDisplay"></span></p>
+  <p>Level: <span id="levelDisplay"></span></p>
+  <p>XP: <span id="xpDisplay"></span> / <span id="xpNextDisplay"></span></p>
+  <div id="xpBar"><div id="xpFill"></div></div>
+  <p>Calories Today: <span id="caloriesTodayDisplay"></span> / <span id="dailyCaloriesDisplay"></span></p>
+  <p>Weight: <span id="weightDisplay"></span> lbs / Goal: <span id="goalWeightDisplay"></span> lbs</p>
+  <h3>Projected Weight Loss (next 30 days)</h3>
+  <canvas id="projectedChart"></canvas>
+</div>
+
+<!-- Daily Calories Page -->
+<div id="caloriesPage" class="page">
+  <h2>Log Calories</h2>
+  <input type="text" id="mealName" placeholder="Meal Name">
+  <input type="number" id="mealCalories" placeholder="Calories">
+  <button onclick="addMeal()">Add Meal</button>
+  <ul id="mealList"></ul>
+</div>
+
+<!-- Weight Tracker Page -->
+<div id="weightPage" class="page">
+  <h2>Weight Tracker</h2>
+  <input type="number" id="weightInput" placeholder="Today's weight">
+  <button onclick="addWeight()">Add Weight</button>
+  <canvas id="weightChart"></canvas>
+</div>
+
+<!-- Goals Page -->
+<div id="goalsPage" class="page">
+  <h2>Set Goals</h2>
+  <input type="text" id="villainName" placeholder="Villain Name">
+  <input type="number" id="goalWeight" placeholder="Goal Weight">
+  <input type="number" id="dailyCalories" placeholder="Daily Calorie Goal">
+  <button onclick="saveGoals()">Save Goals</button>
+</div>
+
+<!-- Tab Bar -->
+<div class="tab-bar">
+  <div class="tab active" onclick="showPage('dashboard')">Dashboard</div>
+  <div class="tab" onclick="showPage('caloriesPage')">Calories</div>
+  <div class="tab" onclick="showPage('weightPage')">Weight</div>
+  <div class="tab" onclick="showPage('goalsPage')">Goals</div>
+</div>
+
+<script>
+// Data storage
+let villainData = JSON.parse(localStorage.getItem('villainData')) || {
+  villainName: 'Dark Villain',
+  level: 1,
+  xp: 0,
+  xpToNextLevel: 100,
+  caloriesToday:0,
+  dailyCalorieGoal:2000,
+  weight:200,
+  goalWeight:180,
+  meals:[],
+  weights:[]
+};
+
+// Tab switching
+function showPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+}
+
+// Save to localStorage
+function saveData(){ localStorage.setItem('villainData', JSON.stringify(villainData)); }
+
+// Add meal
+function addMeal(){
+  let name=document.getElementById('mealName').value;
+  let c=parseInt(document.getElementById('mealCalories').value);
+  if(name && c){ villainData.meals.push({name,c}); villainData.caloriesToday+=c; saveData(); renderMeals(); updateDisplay(); }
+}
+function renderMeals(){
+  let ul=document.getElementById('mealList'); ul.innerHTML='';
+  villainData.meals.forEach(m=>{ let li=document.createElement('li'); li.textContent=`${m.name}: ${m.calories} cal`; ul.appendChild(li); });
+}
+
+// Weight tracking
+function addWeight(){
+  let w=parseFloat(document.getElementById('weightInput').value);
+  if(w){ villainData.weight=w; villainData.weights.push({date:new Date().toLocaleDateString(), weight:w}); saveData(); updateWeightChart(); updateDisplay(); }
+}
+
+// Charts
+let weightChart = new Chart(document.getElementById('weightChart'), {type:'line', data:{labels:[], datasets:[{label:'Weight',data:[], borderColor:'lime', fill:false}]}, options:{scales:{y:{beginAtZero:false}}}});
+let projectedChart = new Chart(document.getElementById('projectedChart'), {type:'line', data:{labels:[], datasets:[{label:'Projected Weight',data:[], borderColor:'yellow', fill:false}]}, options:{scales:{y:{beginAtZero:false}}}});
+
+function updateWeightChart(){
+  let labels=villainData.weights.map(w=>w.date);
+  let data=villainData.weights.map(w=>w.weight);
+  weightChart.data.labels=labels; weightChart.data.datasets[0].data=data; weightChart.update();
+}
+
+function updateProjectedChart(){
+  let labels=[], data=[];
+  let currentWeight=villainData.weight;
+  let goalWeight=villainData.goalWeight;
+  let dailyCalories=villainData.dailyCalorieGoal;
+  let BMR=2500;
+  let dailyDeficit=BMR-dailyCalories;
+  let projectedWeight=currentWeight;
+  for(let i=1;i<=30;i++){
+    projectedWeight-=(dailyDeficit/3500);
+    if(projectedWeight<goalWeight) projectedWeight=goalWeight;
+    labels.push(`Day ${i}`);
+    data.push(projectedWeight.toFixed(1));
+  }
+  projectedChart.data.labels=labels;
+  projectedChart.data.datasets[0].data=data;
+  projectedChart.update();
+}
+
+// Goals
+function saveGoals(){
+  let name=document.getElementById('villainName').value;
+  let goalW=parseFloat(document.getElementById('goalWeight').value);
+  let dailyC=parseInt(document.getElementById('dailyCalories').value);
+  if(name) villainData.villainName=name;
+  if(goalW) villainData.goalWeight=goalW;
+  if(dailyC) villainData.dailyCalorieGoal=dailyC;
+  saveData(); updateDisplay();
+}
+
+// Dashboard
+function updateDisplay(){
+  document.getElementById('villainNameDisplay').textContent=villainData.villainName;
+  document.getElementById('levelDisplay').textContent=villainData.level;
+  document.getElementById('xpDisplay').textContent=villainData.xp;
+  document.getElementById('xpNextDisplay').textContent=villainData.xpToNextLevel;
+  document.getElementById('xpFill').style.width=`${(villainData.xp/villainData.xpToNextLevel)*100}%`;
+  document.getElementById('caloriesTodayDisplay').textContent=villainData.caloriesToday;
+  document.getElementById('dailyCaloriesDisplay').textContent=villainData.dailyCalorieGoal;
+  document.getElementById('weightDisplay').textContent=villainData.weight;
+  document.getElementById('goalWeightDisplay').textContent=villainData.goalWeight;
+  updateProjectedChart();
+}
+
+renderMeals(); updateWeightChart(); updateDisplay();
+</script>
+
 </body>
 </html>
